@@ -11,6 +11,10 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+  - node_modules/archiver/**
+  - node_modules/archiver-utils/**
+  - node_modules/zip-stream/**
+  - node_modules/readable-stream/**
 win:
   executableName: electron-sync-pack
 nsis:
