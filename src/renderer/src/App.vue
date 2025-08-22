@@ -25,6 +25,16 @@
 import NetworkPanel from './components/NetworkPanel.vue'
 import TaskPanel from './components/TaskPanel.vue'
 import TaskList from './components/TaskList.vue'
+import { useNetworkStore } from '@renderer/store/network'
+import { onBeforeUnmount, onMounted } from 'vue'
+
+const networkStore = useNetworkStore()
+onMounted(() => {
+  networkStore.initOn()
+})
+onBeforeUnmount(() => {
+  networkStore.initOff()
+})
 </script>
 
 <style scoped>

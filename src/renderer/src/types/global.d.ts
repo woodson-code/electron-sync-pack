@@ -4,7 +4,10 @@ declare global {
   interface ElectronAPI {
     network: {
       startServer: (port: number) => Promise<any>
+      stopServer: () => Promise<any>
+      switchTaskOn: () => Promise<any>
       connectToServer: (host: string, port: number) => Promise<any>
+      disconnectToServer: (host: string, port: number) => Promise<any>
       getConnectedNodes: () => Promise<any[]>
       getNodeInfo: () => Promise<any>
     }

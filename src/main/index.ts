@@ -97,6 +97,7 @@ class ElectronSyncPack {
         nodeIntegration: true
       }
     })
+    this.networkManager.setupMainWindow(this.mainWindow)
 
     this.mainWindow.on('ready-to-show', () => {
       this.mainWindow?.show()
@@ -125,8 +126,21 @@ class ElectronSyncPack {
       return await this.networkManager.startServer(port)
     })
 
+    ipcMain.handle('network:stop-server', async () => {
+      return await this.networkManager.stopServer()
+    })
+
+    ipcMain.handle('network:switch-task-on', async () => {
+      this.taskManager.setNetworkManager(this.networkManager)
+      return Promise.resolve(true)
+    })
+
     ipcMain.handle('network:connect-to-server', async (_, host: string, port: number) => {
       return await this.networkManager.connectToServer(host, port)
+    })
+
+    ipcMain.handle('network:disconnect-to-server', async (_, host: string, port: number) => {
+      return await this.networkManager.disconnectToServer()
     })
 
     ipcMain.handle('network:get-connected-nodes', () => {

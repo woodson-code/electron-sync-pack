@@ -5,11 +5,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 网络相关
   network: {
     startServer: (port: number) => ipcRenderer.invoke('network:start-server', port),
+    stopServer: () => ipcRenderer.invoke('network:stop-server'),
+    switchTaskOn: () => ipcRenderer.invoke('network:switch-task-on'),
     connectToServer: (host: string, port: number) => ipcRenderer.invoke('network:connect-to-server', host, port),
+    disconnectToServer: (host: string, port: number) => ipcRenderer.invoke('network:disconnect-to-server', host, port),
     getConnectedNodes: () => ipcRenderer.invoke('network:get-connected-nodes'),
     getNodeInfo: () => ipcRenderer.invoke('network:get-node-info')
   },
-  
+
   // 任务相关
   task: {
     createPackTask: (taskConfig: any) => ipcRenderer.invoke('task:create-pack-task', taskConfig),
@@ -17,18 +20,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAllTasks: () => ipcRenderer.invoke('task:get-all-tasks'),
     cancelTask: (taskId: string) => ipcRenderer.invoke('task:cancel-task', taskId)
   },
-  
+
   // 配置相关
   config: {
     save: (config: any) => ipcRenderer.invoke('config:save', config),
     load: () => ipcRenderer.invoke('config:load')
   },
-  
+
   // 事件监听
   on: (channel: string, callback: Function) => {
     ipcRenderer.on(channel, (_, data) => callback(data))
   },
-  
+
   off: (channel: string) => {
     ipcRenderer.removeAllListeners(channel)
   }
