@@ -14,7 +14,7 @@
             <el-button type="danger" @click="stopServer" :loading="loading">停止服务器</el-button>
           </template>
           <template v-else>
-            <el-button type="primary" @click="startServer" :loading="loading">启动服务器</el-button>
+            <el-button type="primary" @click="disconnect" :loading="loading">启动服务器</el-button>
           </template>
         </el-form-item>
       </template>
