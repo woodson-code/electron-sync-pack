@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events'
 import WebSocket from 'ws'
 import { createServer, Server } from 'http'
+import { createWriteStream, WriteStream } from 'fs'
+import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
 import { BrowserWindow } from 'electron'
@@ -40,12 +42,20 @@ export class NetworkManager extends EventEmitter {
   private serverPort: number | null = null
   private clientWs: WebSocket | null = null
   private mainWindow: BrowserWindow | null = null
+  // 服务器侧：保存上传产物的根目录
+  private serverSaveRoot: string = join(process.cwd(), 'outputs')
+  // 服务器侧：进行中的上传写入流，key: clientId + ':' + uploadId
+  private serverUploadStreams: Map<string, WriteStream> = new Map()
 
   constructor() {
     super()
   }
   setupMainWindow(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
+  }
+
+  setServerSaveRoot(root: string): void {
+    this.serverSaveRoot = root
   }
 
   // 向所有渲染进程广播状态变化
@@ -256,6 +266,51 @@ export class NetworkManager extends EventEmitter {
           this.broadcastToAll(message)
           break
 
+        case 'upload-start': {
+          // 开始接收来自某个工作节点的文件
+          const { uploadId, fileName, subDir } = message.data
+          const dir = subDir ? join(this.serverSaveRoot, subDir) : this.serverSaveRoot
+          // 简易创建目录（依赖系统 mkdir -p）
+          require('fs').mkdirSync(dir, { recursive: true })
+          const targetPath = join(dir, fileName)
+          const wsKey = `${clientId}:${uploadId}`
+          const ws = createWriteStream(targetPath)
+          this.serverUploadStreams.set(wsKey, ws)
+          // 回执
+          this.sendToNode(client!.info!.nodeId, {
+            type: 'upload-ack',
+            data: { uploadId, status: 'started', path: targetPath }
+          })
+          break
+        }
+
+        case 'upload-chunk': {
+          const { uploadId, chunkBase64 } = message.data
+          const wsKey = `${clientId}:${uploadId}`
+          const stream = this.serverUploadStreams.get(wsKey)
+          if (stream) {
+            const buf = Buffer.from(chunkBase64, 'base64')
+            stream.write(buf)
+          }
+          break
+        }
+
+        case 'upload-end': {
+          const { uploadId } = message.data
+          const wsKey = `${clientId}:${uploadId}`
+          const stream = this.serverUploadStreams.get(wsKey)
+          if (stream) {
+            stream.end()
+            this.serverUploadStreams.delete(wsKey)
+          }
+          // 回执
+          this.sendToNode(client!.info!.nodeId, {
+            type: 'upload-ack',
+            data: { uploadId, status: 'completed' }
+          })
+          break
+        }
+
         default:
           console.log('未知消息类型:', message.type)
       }
@@ -275,6 +330,10 @@ export class NetworkManager extends EventEmitter {
 
         case 'task-status':
           this.emit('task-status', message.data)
+          break
+
+        case 'upload-ack':
+          this.emit('upload-ack', message.data)
           break
 
         default:
@@ -307,6 +366,77 @@ export class NetworkManager extends EventEmitter {
     if (this.clientWs && this.clientWs.readyState === WebSocket.OPEN) {
       this.clientWs.send(JSON.stringify(message))
     }
+  }
+
+  // 服务器保存上传的文件：这里预留接口，真实保存逻辑应由主进程监听 'upload-result' 事件并完成
+  onUploadRequest(handler: (payload: any) => void): void {
+    this.on('upload-result', handler)
+  }
+
+  ackUploadToWorker(nodeId: string, payload: any): void {
+    this.sendToNode(nodeId, { type: 'upload-ack', data: payload })
+  }
+
+  // 工作节点：通过 WebSocket 将本地文件上传至服务器
+  async uploadFileToServer(
+    localFilePath: string,
+    options: { uploadId: string; fileName: string; subDir?: string; onAck?: (data: any) => void }
+  ): Promise<void> {
+    if (!this.clientWs || this.clientWs.readyState !== WebSocket.OPEN) {
+      throw new Error('未连接到服务器，无法上传文件')
+    }
+    const ws = this.clientWs
+
+    // 监听 ack（一次上传的简单监听）
+    const onMessage = (data: WebSocket.Data) => {
+      try {
+        const msg = JSON.parse(data.toString())
+        if (msg.type === 'upload-ack' && msg.data?.uploadId === options.uploadId) {
+          options.onAck && options.onAck(msg.data)
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+    ws.on('message', onMessage)
+
+    // 发送开始
+    ws.send(
+      JSON.stringify({
+        type: 'upload-start',
+        data: { uploadId: options.uploadId, fileName: options.fileName, subDir: options.subDir }
+      })
+    )
+
+    // 分片发送（base64 简化实现）
+    const fs = await import('fs')
+    const CHUNK_SIZE = 1024 * 512 // 512KB
+    const stat = fs.statSync(localFilePath)
+    const fd = fs.openSync(localFilePath, 'r')
+    try {
+      const buffer = Buffer.alloc(CHUNK_SIZE)
+      let offset = 0
+      while (offset < stat.size) {
+        const toRead = Math.min(CHUNK_SIZE, stat.size - offset)
+        const bytesRead = fs.readSync(fd, buffer, 0, toRead, offset)
+        const chunk = buffer.subarray(0, bytesRead)
+        ws.send(
+          JSON.stringify({
+            type: 'upload-chunk',
+            data: { uploadId: options.uploadId, chunkBase64: chunk.toString('base64') }
+          })
+        )
+        offset += bytesRead
+      }
+    } finally {
+      fs.closeSync(fd)
+    }
+
+    // 结束
+    ws.send(JSON.stringify({ type: 'upload-end', data: { uploadId: options.uploadId } }))
+
+    // 简化：移除监听（实际项目中可在完成回执后移除）
+    ws.off('message', onMessage)
   }
 
   getConnectedNodes(): NodeInfo[] {

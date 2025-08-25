@@ -54,10 +54,16 @@ export class PackExecutor {
         progressCallback(platformProgress + 35 / totalPlatforms, `${platform} 平台打包完成`)
       }
 
-      // 5. 复制结果到输出目录
-      progressCallback(95, '复制打包结果...')
-      await this.copyResults(results, config.outputDir)
-      progressCallback(100, '打包任务完成')
+      // 5. 处理打包结果：优先上传到服务器，否则复制到本地输出目录
+      if (config.upload && config.upload.host && config.upload.targetDir) {
+        progressCallback(95, '上传打包结果到服务器...')
+        await this.uploadResults(results, config.upload, progressCallback)
+        progressCallback(100, '打包任务完成（已上传）')
+      } else {
+        progressCallback(95, '复制打包结果到本地目录...')
+        await this.copyResults(results, config.outputDir)
+        progressCallback(100, '打包任务完成（已复制）')
+      }
 
       return results
     } catch (error) {
@@ -265,6 +271,53 @@ export class PackExecutor {
       await copy(result.outputPath, targetPath)
       result.outputPath = targetPath // 更新输出路径
     }
+  }
+
+  private async uploadResults(
+    results: TaskResult[],
+    upload: {
+      host: string
+      port?: number
+      username: string
+      password?: string
+      privateKey?: string
+      targetDir: string
+    },
+    progressCallback: (progress: number, log: string) => void
+  ): Promise<void> {
+    const NodeSSH = (await import('node-ssh')).NodeSSH
+    const ssh = new NodeSSH()
+
+    try {
+      await ssh.connect({
+        host: upload.host,
+        port: upload.port ?? 22,
+        username: upload.username,
+        password: upload.password,
+        privateKey: upload.privateKey
+      })
+
+      for (const result of results) {
+        const remoteDir = upload.targetDir.replace(/\\+/g, '/').replace(/\/+$/g, '')
+        const remoteFileName = `${this.getBaseName(result.outputPath)}`
+        const remotePath = `${remoteDir}/${remoteFileName}`
+
+        // 确保远端目录存在
+        await ssh.execCommand(`mkdir -p "${remoteDir}"`)
+
+        progressCallback(97, `上传 ${remoteFileName} -> ${upload.host}:${remotePath}`)
+        await ssh.putFile(result.outputPath, remotePath)
+        // 将结果路径更新为远端路径
+        result.outputPath = `ssh://${upload.username}@${upload.host}${remotePath}`
+      }
+    } finally {
+      ssh.dispose()
+    }
+  }
+
+  private getBaseName(filePath: string): string {
+    const parts = filePath.replace(/\\/g, '/').split('/')
+    return parts[parts.length - 1]
   }
 
   private getFileExtension(filePath: string): string {

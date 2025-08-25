@@ -14,6 +14,15 @@ export interface TaskConfig {
   buildScript?: string
   installScript?: string
   env?: Record<string, string>
+  upload?: {
+    host: string
+    port?: number
+    username: string
+    password?: string
+    privateKey?: string
+    targetDir: string
+  }
+  copyLocal?: boolean
 }
 
 export interface TaskResult {
@@ -97,7 +106,8 @@ export class TaskManager extends EventEmitter {
   }
 
   async executePackTask(taskData: { taskId: string; config: TaskConfig }): Promise<void> {
-    const { taskId, config } = taskData
+    const { taskId } = taskData
+    const config: TaskConfig = { ...taskData.config }
     
     // 创建本地任务记录
     const task: Task = {
@@ -117,6 +127,10 @@ export class TaskManager extends EventEmitter {
     this.emit('task-started', task)
 
     try {
+      // 工作节点不做本地复制，直接上传
+      if (this.networkManager && !this.networkManager.isServerMode()) {
+        config.copyLocal = false
+      }
       // 执行打包任务
       const result = await this.packExecutor.execute(config, (progress: number, log: string) => {
         task.progress = progress
@@ -151,27 +165,24 @@ export class TaskManager extends EventEmitter {
 
       for (const result of task.result) {
         const fileName = `${task.id}_${result.platform}.zip`
-        
+
         // 创建临时压缩包
-        const tempZipPath = join(process.cwd(), 'temp', fileName)
-        await ensureDir(join(process.cwd(), 'temp'))
-        
+        const tempDir = join(process.cwd(), 'temp')
+        const tempZipPath = join(tempDir, fileName)
+        await ensureDir(tempDir)
+
         // 压缩结果文件
         await this.fileTransfer.compressFile(result.outputPath, tempZipPath)
-        
-        // 发送到服务器
+
+        // 通过 WebSocket 分片上传到服务器（服务器会保存在 outputs 下）
         if (this.networkManager) {
-          this.networkManager.sendToServer({
-            type: 'upload-result',
-            data: {
-              taskId: task.id,
-              fileName: fileName,
-              filePath: tempZipPath,
-              platform: result.platform
-            }
+          await this.networkManager.uploadFileToServer(tempZipPath, {
+            uploadId: `${task.id}-${result.platform}`,
+            fileName,
+            subDir: task.id
           })
         }
-        
+
         // 清理临时文件
         await remove(tempZipPath)
       }
