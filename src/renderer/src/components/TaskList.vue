@@ -33,7 +33,8 @@ onMounted(async () => {
   window.electronAPI.on('task:progress', refresh)
 })
 
-async function refresh() {
+async function refresh(taskInfo) {
+  console.log('task:progress', taskInfo)
   tasks.value = await window.electronAPI.task.getAllTasks()
 }
 

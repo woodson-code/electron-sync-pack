@@ -15,7 +15,7 @@ export class PackExecutor {
   async execute(config: TaskConfig, progressCallback: (progress: number, log: string) => void): Promise<TaskResult[]> {
     const taskId = this.generateTaskId()
     const workDir = join(process.cwd(), 'workspace', taskId)
-    
+
     try {
       await ensureDir(workDir)
       progressCallback(5, '创建工作目录完成')
@@ -38,16 +38,16 @@ export class PackExecutor {
       // 4. 执行打包
       const results: TaskResult[] = []
       const totalPlatforms = config.platforms.length
-      
+
       for (let i = 0; i < config.platforms.length; i++) {
         const platform = config.platforms[i]
         const platformProgress = 60 + (i / totalPlatforms) * 35
-        
+
         progressCallback(platformProgress, `开始打包 ${platform} 平台...`)
-        
+
         const result = await this.buildForPlatform(workDir, platform, config, progressCallback)
         results.push(result)
-        
+
         progressCallback(platformProgress + (35 / totalPlatforms), `${platform} 平台打包完成`)
       }
 
@@ -92,7 +92,7 @@ export class PackExecutor {
   }
 
   private async installDependencies(
-    workDir: string, 
+    workDir: string,
     installScript: string = 'npm install',
     progressCallback: (progress: number, log: string) => void
   ): Promise<void> {
@@ -132,11 +132,11 @@ export class PackExecutor {
     progressCallback: (progress: number, log: string) => void
   ): Promise<TaskResult> {
     const startTime = Date.now()
-    
+
     return new Promise((resolve, reject) => {
       const buildScript = config.buildScript || 'npm run build'
       const [command, ...args] = buildScript.split(' ')
-      
+
       // 设置环境变量
       const env = {
         ...process.env,
@@ -164,14 +164,14 @@ export class PackExecutor {
             // 查找构建输出文件
             const outputPath = await this.findBuildOutput(workDir, platform)
             const stats = await stat(outputPath)
-            
+
             const result: TaskResult = {
               outputPath,
               platform,
               size: stats.size,
               buildTime: Date.now() - startTime
             }
-            
+
             resolve(result)
           } catch (error) {
             reject(new Error(`查找构建输出失败: ${(error as Error).message}`))
@@ -190,11 +190,7 @@ export class PackExecutor {
   private async findBuildOutput(workDir: string, platform: string): Promise<string> {
     // 常见的构建输出目录
     const possiblePaths = [
-      join(workDir, 'dist'),
-      join(workDir, 'build'),
-      join(workDir, 'out'),
-      join(workDir, 'release'),
-      join(workDir, 'dist-electron')
+      join(workDir, 'dist')
     ]
 
     for (const basePath of possiblePaths) {
@@ -247,11 +243,11 @@ export class PackExecutor {
 
   private async copyResults(results: TaskResult[], outputDir: string): Promise<void> {
     await ensureDir(outputDir)
-    
+
     for (const result of results) {
       const fileName = `build_${result.platform}_${Date.now()}${this.getFileExtension(result.outputPath)}`
       const targetPath = join(outputDir, fileName)
-      
+
       await copy(result.outputPath, targetPath)
       result.outputPath = targetPath // 更新输出路径
     }
