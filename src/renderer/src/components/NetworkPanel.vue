@@ -14,7 +14,7 @@
             <el-button type="danger" @click="stopServer" :loading="loading">停止服务器</el-button>
           </template>
           <template v-else>
-            <el-button type="primary" @click="disconnect" :loading="loading">启动服务器</el-button>
+            <el-button type="primary" @click="startServer" :loading="loading">启动服务器</el-button>
           </template>
         </el-form-item>
       </template>
@@ -28,7 +28,7 @@
         </el-form-item>
         <el-form-item>
           <template v-if="serverStatus === ServerStatus.connected">
-            <el-button type="danger" @click="connect" :loading="loading">断开连接</el-button>
+            <el-button type="danger" @click="disconnect" :loading="loading">断开连接</el-button>
           </template>
           <template v-else>
             <el-button type="primary" @click="connect" :loading="loading">连接</el-button>
