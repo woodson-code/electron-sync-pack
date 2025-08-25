@@ -12,7 +12,10 @@ export class PackExecutor {
     this.git = simpleGit()
   }
 
-  async execute(config: TaskConfig, progressCallback: (progress: number, log: string) => void): Promise<TaskResult[]> {
+  async execute(
+    config: TaskConfig,
+    progressCallback: (progress: number, log: string) => void
+  ): Promise<TaskResult[]> {
     const taskId = this.generateTaskId()
     const workDir = join(process.cwd(), 'workspace', taskId)
 
@@ -48,7 +51,7 @@ export class PackExecutor {
         const result = await this.buildForPlatform(workDir, platform, config, progressCallback)
         results.push(result)
 
-        progressCallback(platformProgress + (35 / totalPlatforms), `${platform} 平台打包完成`)
+        progressCallback(platformProgress + 35 / totalPlatforms, `${platform} 平台打包完成`)
       }
 
       // 5. 复制结果到输出目录
@@ -57,7 +60,6 @@ export class PackExecutor {
       progressCallback(100, '打包任务完成')
 
       return results
-
     } catch (error) {
       throw new Error(`打包执行失败: ${(error as Error).message}`)
     } finally {
@@ -188,57 +190,69 @@ export class PackExecutor {
   }
 
   private async findBuildOutput(workDir: string, platform: string): Promise<string> {
-    // 常见的构建输出目录
-    const possiblePaths = [
-      join(workDir, 'dist')
-    ]
+    // 轮询等待产物生成，避免 electron-builder 日志已输出但文件尚未落盘
+    const possibleRoots = [join(workDir, 'dist')]
+    const maxAttempts = 120 // 最长等待约 2 分钟（120 * 1000ms）
+    const waitMs = 1000
 
-    for (const basePath of possiblePaths) {
-      try {
-        const stats = await stat(basePath)
-        if (stats.isDirectory()) {
-          // 查找平台特定的文件
-          const platformFiles = await this.findPlatformFiles(basePath, platform)
-          if (platformFiles.length > 0) {
-            return platformFiles[0] // 返回第一个找到的文件
-          }
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      for (const root of possibleRoots) {
+        const artifacts = await this.findPlatformArtifactsRecursively(root, platform)
+        if (artifacts.length > 0) {
+          return artifacts[0]
         }
-      } catch (error) {
-        // 目录不存在，继续查找
-        continue
       }
+      await this.sleep(waitMs)
     }
 
-    throw new Error(`未找到 ${platform} 平台的构建输出文件`)
+    throw new Error(`未找到 ${platform} 平台的构建输出文件（超时）`)
   }
 
-  private async findPlatformFiles(dir: string, platform: string): Promise<string[]> {
-    // 这里可以根据平台查找特定的文件扩展名
+  private async findPlatformArtifactsRecursively(dir: string, platform: string): Promise<string[]> {
+    const fs = await import('fs')
+    const { readdir, stat: statAsync } = fs.promises
+
     const platformExtensions: Record<string, string[]> = {
-      'win32': ['.exe', '.msi', '.nsis'],
-      'darwin': ['.dmg', '.pkg', '.app'],
-      'linux': ['.AppImage', '.deb', '.rpm']
+      win32: ['.exe', '.msi', '.nsis'],
+      darwin: ['.dmg', '.pkg', '.app'],
+      linux: ['.AppImage', '.deb', '.rpm']
     }
 
-    const extensions = platformExtensions[platform] || []
-    const files: string[] = []
+    const wantedExts = new Set((platformExtensions[platform] || []).map((e) => e.toLowerCase()))
+    const results: string[] = []
 
-    // 简单的文件查找实现
-    // 在实际项目中，你可能需要使用更复杂的文件遍历逻辑
-    for (const ext of extensions) {
-      // 这里需要实现递归文件查找
-      // 为了简化，我们假设文件在根目录
+    async function walk(current: string): Promise<void> {
       try {
-        const filePath = join(dir, `*${ext}`)
-        // 实际实现中需要使用 glob 或其他文件查找库
-        files.push(filePath)
-      } catch (error) {
-        // 文件不存在，继续查找
-        continue
+        const entries = await readdir(current, { withFileTypes: true })
+        for (const entry of entries) {
+          const full = join(current, entry.name)
+          if (entry.isDirectory()) {
+            await walk(full)
+          } else if (entry.isFile()) {
+            const lower = entry.name.toLowerCase()
+            for (const ext of wantedExts) {
+              if (lower.endsWith(ext)) {
+                // 确认文件已存在且大小 > 0
+                const s = await statAsync(full)
+                if (s.size > 0) {
+                  results.push(full)
+                }
+                break
+              }
+            }
+          }
+        }
+      } catch {
+        // 目录可能不存在或暂不可读，忽略并返回空结果
       }
     }
 
-    return files
+    await walk(dir)
+    return results
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   private async copyResults(results: TaskResult[], outputDir: string): Promise<void> {
