@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, toRaw } from 'vue'
 
 const loading = ref(false)
 
@@ -47,7 +47,7 @@ const form = reactive({
 async function createTask() {
   loading.value = true
   try {
-    const taskId = await window.electronAPI.task.createPackTask({ ...form })
+    const taskId = await window.electronAPI.task.createPackTask({ ...toRaw(form) })
     console.log('已创建任务: ', taskId)
   } finally {
     loading.value = false

@@ -51,6 +51,7 @@
     <el-divider />
 
     <el-card shadow="never" header="已连接节点">
+      <el-button @click="refreshNodes">刷新节点</el-button>
       <el-table :data="nodes" style="width: 100%" size="small">
         <el-table-column prop="nodeId" label="NodeId" min-width="260" />
         <el-table-column prop="hostname" label="主机名" width="180" />
