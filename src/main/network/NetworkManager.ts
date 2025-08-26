@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events'
 import WebSocket from 'ws'
 import { createServer, Server } from 'http'
-import { createWriteStream, WriteStream } from 'fs'
+import { createWriteStream, mkdirSync, WriteStream } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { hostname } from 'os'
@@ -46,6 +46,8 @@ export class NetworkManager extends EventEmitter {
   private serverSaveRoot: string = join(process.cwd(), 'outputs')
   // 服务器侧：进行中的上传写入流，key: clientId + ':' + uploadId
   private serverUploadStreams: Map<string, WriteStream> = new Map()
+  // 服务器侧：保存上传任务的信息，key: clientId + ':' + uploadId
+  private serverUploadInfo: Map<string, { taskConfig?: any; targetPath: string }> = new Map()
 
   constructor() {
     super()
@@ -268,14 +270,21 @@ export class NetworkManager extends EventEmitter {
 
         case 'upload-start': {
           // 开始接收来自某个工作节点的文件
-          const { uploadId, fileName, subDir } = message.data
+          const { uploadId, fileName, subDir, taskConfig } = message.data
           const dir = subDir ? join(this.serverSaveRoot, subDir) : this.serverSaveRoot
           // 简易创建目录（依赖系统 mkdir -p）
-          require('fs').mkdirSync(dir, { recursive: true })
+          mkdirSync(dir, { recursive: true })
           const targetPath = join(dir, fileName)
           const wsKey = `${clientId}:${uploadId}`
           const ws = createWriteStream(targetPath)
           this.serverUploadStreams.set(wsKey, ws)
+
+          // 保存上传任务信息
+          this.serverUploadInfo.set(wsKey, {
+            taskConfig,
+            targetPath
+          })
+
           // 回执
           this.sendToNode(client!.info!.nodeId, {
             type: 'upload-ack',
@@ -303,6 +312,19 @@ export class NetworkManager extends EventEmitter {
             stream.end()
             this.serverUploadStreams.delete(wsKey)
           }
+
+          // 获取上传任务信息
+          const uploadInfo = this.serverUploadInfo.get(wsKey)
+          if (uploadInfo) {
+            // 触发文件上传完成事件，让主进程处理文件移动
+            this.emit('file-upload-completed', {
+              uploadId,
+              targetPath: uploadInfo.targetPath,
+              taskConfig: uploadInfo.taskConfig
+            })
+            this.serverUploadInfo.delete(wsKey)
+          }
+
           // 回执
           this.sendToNode(client!.info!.nodeId, {
             type: 'upload-ack',
@@ -380,7 +402,7 @@ export class NetworkManager extends EventEmitter {
   // 工作节点：通过 WebSocket 将本地文件上传至服务器
   async uploadFileToServer(
     localFilePath: string,
-    options: { uploadId: string; fileName: string; subDir?: string; onAck?: (data: any) => void }
+    options: { uploadId: string; fileName: string; subDir?: string; taskConfig?: any; onAck?: (data: any) => void }
   ): Promise<void> {
     if (!this.clientWs || this.clientWs.readyState !== WebSocket.OPEN) {
       throw new Error('未连接到服务器，无法上传文件')
@@ -404,7 +426,12 @@ export class NetworkManager extends EventEmitter {
     ws.send(
       JSON.stringify({
         type: 'upload-start',
-        data: { uploadId: options.uploadId, fileName: options.fileName, subDir: options.subDir }
+        data: {
+          uploadId: options.uploadId,
+          fileName: options.fileName,
+          subDir: options.subDir,
+          taskConfig: options.taskConfig
+        }
       })
     )
 

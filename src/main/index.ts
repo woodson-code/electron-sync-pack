@@ -1,9 +1,9 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { NetworkManager } from './network/NetworkManager'
-import { TaskManager } from './task/TaskManager'
+import { TaskManager, TaskConfig } from './task/TaskManager'
 import { ConfigManager } from './config/ConfigManager'
 
 class ElectronSyncPack {
@@ -139,7 +139,7 @@ class ElectronSyncPack {
       return await this.networkManager.connectToServer(host, port)
     })
 
-    ipcMain.handle('network:disconnect-to-server', async (_, host: string, port: number) => {
+    ipcMain.handle('network:disconnect-to-server', async () => {
       return await this.networkManager.disconnectToServer()
     })
 
@@ -152,7 +152,7 @@ class ElectronSyncPack {
     })
 
     // 任务相关
-    ipcMain.handle('task:create-pack-task', async (_, taskConfig: any) => {
+    ipcMain.handle('task:create-pack-task', async (_, taskConfig: TaskConfig) => {
       return await this.taskManager.createPackTask(taskConfig)
     })
 
@@ -169,7 +169,7 @@ class ElectronSyncPack {
     })
 
     // 配置相关
-    ipcMain.handle('config:save', async (_, config: any) => {
+    ipcMain.handle('config:save', async (_, config: Record<string, unknown>) => {
       return await this.configManager.saveConfig(config)
     })
 
@@ -188,6 +188,11 @@ class ElectronSyncPack {
       this.mainWindow?.webContents.send('network:node-disconnected', nodeInfo)
     })
 
+    // 监听文件上传完成事件
+    this.networkManager.on('file-upload-completed', async (data: { uploadId: string; targetPath: string; taskConfig?: TaskConfig }) => {
+      await this.handleFileUploadCompleted(data)
+    })
+
     // 监听任务事件
     this.taskManager.on('task-started', (taskInfo) => {
       this.mainWindow?.webContents.send('task:started', taskInfo)
@@ -204,6 +209,41 @@ class ElectronSyncPack {
     this.taskManager.on('task-progress', (taskInfo) => {
       this.mainWindow?.webContents.send('task:progress', taskInfo)
     })
+  }
+
+  private async handleFileUploadCompleted(data: { uploadId: string; targetPath: string; taskConfig?: TaskConfig }): Promise<void> {
+    try {
+      const { targetPath, taskConfig } = data
+      
+      // 如果有任务配置且包含输出目录，则移动文件到指定目录
+      if (taskConfig && taskConfig.outputDir) {
+        const fs = await import('fs-extra')
+        const path = await import('path')
+        
+        // 确保目标目录存在
+        await fs.ensureDir(taskConfig.outputDir)
+        
+        // 获取文件名
+        const fileName = path.basename(targetPath)
+        const targetFilePath = path.join(taskConfig.outputDir, fileName)
+        
+        // 移动文件到指定目录
+        await fs.move(targetPath, targetFilePath, { overwrite: true })
+        
+        console.log(`文件已移动到指定目录: ${targetFilePath}`)
+        
+        // 通知渲染进程文件移动完成
+        this.mainWindow?.webContents.send('file:moved-to-output-dir', {
+          originalPath: targetPath,
+          targetPath: targetFilePath,
+          outputDir: taskConfig.outputDir
+        })
+      } else {
+        console.log(`文件上传完成，保存在: ${targetPath}`)
+      }
+    } catch (error) {
+      console.error('处理文件上传完成事件失败:', error)
+    }
   }
 }
 

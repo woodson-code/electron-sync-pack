@@ -174,12 +174,13 @@ export class TaskManager extends EventEmitter {
         // 压缩结果文件
         await this.fileTransfer.compressFile(result.outputPath, tempZipPath)
 
-        // 通过 WebSocket 分片上传到服务器（服务器会保存在 outputs 下）
+        // 通过 WebSocket 分片上传到服务器，包含任务配置信息
         if (this.networkManager) {
           await this.networkManager.uploadFileToServer(tempZipPath, {
             uploadId: `${task.id}-${result.platform}`,
             fileName,
-            subDir: task.id
+            subDir: task.id,
+            taskConfig: task.config // 传递任务配置，包含输出目录信息
           })
         }
 
